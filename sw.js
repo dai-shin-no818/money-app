@@ -1,5 +1,5 @@
 /* マネーアプリ: ページとフォントを端末に保存。お金のデータ（script.google.com）は保存しない */
-const CACHE = 'money-v1';
+const CACHE = 'money-v2';
 self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./']))); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
@@ -11,7 +11,22 @@ self.addEventListener('fetch', e => {
   const key = isPage ? './' : e.request;
   e.respondWith(caches.open(CACHE).then(async cache => {
     const hit = await cache.match(key);
-    const fresh = fetch(e.request).then(res => { if (res.ok || res.type === 'opaque') cache.put(key, res.clone()); return res; }).catch(() => hit);
+    const fresh = fetch(e.request, isPage ? { cache: 'no-cache' } : {}).then(async res => {
+      if (res.ok || res.type === 'opaque') {
+        // 新しい版のページが届いたら、開いている画面に知らせる（画面が1回だけ読み込み直す）
+        if (isPage && hit && res.ok) {
+          const [a, b] = await Promise.all([hit.clone().text(), res.clone().text()]);
+          if (a !== b) {
+            await cache.put(key, res.clone());
+            const cs = await self.clients.matchAll({ type: 'window' });
+            cs.forEach(c => c.postMessage('money-updated'));
+            return res;
+          }
+        }
+        await cache.put(key, res.clone());
+      }
+      return res;
+    }).catch(() => hit);
     if (hit) { e.waitUntil(fresh); return hit; }
     return fresh;
   }));
